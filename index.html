@@ -8,7 +8,10 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="流明">
   <meta name="theme-color" content="#0a0a0a">
+  
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/webtorrent@latest/webtorrent.min.js"></script>
+  
   <style>
     :root {
       --sat: env(safe-area-inset-top, 20px);
@@ -29,16 +32,20 @@
   </style>
 </head>
 <body class="bg-black text-neutral-100 h-screen flex flex-col justify-between overflow-hidden">
+
+  <!-- 顶部状态栏 -->
   <header class="safe-top bg-neutral-950/90 backdrop-blur border-b border-neutral-900 px-5 py-3 flex justify-between items-center z-10">
     <div class="flex items-center gap-2">
       <span class="font-bold text-white tracking-wider text-sm">流明 LUMEN</span>
-      <span class="text-[10px] px-1.5 py-0.5 bg-neutral-800 text-neutral-400 rounded">本地版</span>
+      <span class="text-[10px] px-1.5 py-0.5 bg-blue-950 text-blue-400 border border-blue-800/50 rounded font-mono">v2.1 WebTorrent</span>
     </div>
     <span id="storage-indicator" class="text-[11px] text-neutral-500 font-mono">0.0 MB</span>
   </header>
 
+  <!-- 视图主容器 -->
   <main id="app-viewport" class="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4"></main>
 
+  <!-- 底部导航 -->
   <nav class="safe-bottom bg-neutral-950/95 backdrop-blur border-t border-neutral-900 flex justify-around py-2 z-10">
     <button onclick="switchTab('home')" id="tab-home" class="flex flex-col items-center gap-1 text-white flex-1 py-1">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
@@ -65,6 +72,31 @@
     let files = [];
     let corsProxy = localStorage.getItem('lumen_cors') || 'https://corsproxy.io/?';
     const abortPool = new Map();
+    let wtClient = null;
+
+    const DEFAULT_TRACKERS = [
+      'wss://tracker.openwebtorrent.com',
+      'wss://tracker.btorrent.xyz',
+      'wss://tracker.fastcast.nz',
+      'wss://tracker.novage.com.ua',
+      'wss://tracker.webtorrent.dev'
+    ];
+
+    function getWebTorrentClient() {
+      if (!wtClient && window.WebTorrent) {
+        wtClient = new window.WebTorrent({
+          tracker: {
+            rtcConfig: {
+              iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
+              ]
+            }
+          }
+        });
+      }
+      return wtClient;
+    }
 
     function openDB() {
       return new Promise((resolve, reject) => {
@@ -110,10 +142,6 @@
       });
     }
 
-    if (navigator.storage && navigator.storage.persist) {
-      navigator.storage.persist();
-    }
-
     async function init() {
       files = await loadAllFileRecords();
       updateStorageUsage();
@@ -138,27 +166,71 @@
       render();
     }
 
+    function sanitizeInput(raw) {
+      return (raw || '').replace(/[\r\n\s\t]+/g, '').trim();
+    }
+
+    function formatMagnetWithTrackers(rawMagnet) {
+      let url = sanitizeInput(rawMagnet);
+      DEFAULT_TRACKERS.forEach(tr => {
+        if (!url.includes(encodeURIComponent(tr)) && !url.includes(tr)) {
+          url += `&tr=${encodeURIComponent(tr)}`;
+        }
+      });
+      return url;
+    }
+
+    function parseMagnetName(magnetUri) {
+      try {
+        const params = new URLSearchParams(magnetUri.replace(/^magnet:\?/i, ''));
+        const dn = params.get('dn');
+        const xt = params.get('xt') || '';
+        const hash = xt.split(':').pop() || 'Torrent';
+        return dn ? decodeURIComponent(dn) : `Magnet [${hash.substring(0, 8)}]`;
+      } catch (e) {
+        return '磁力任务';
+      }
+    }
+
     async function handleSniff() {
       const input = document.getElementById('input-url');
-      const url = input ? input.value.trim() : '';
-      if (!url) return;
+      const raw = input ? input.value : '';
+      const cleanUrl = sanitizeInput(raw);
+      
+      if (!cleanUrl) return alert('请输入有效链接');
 
       const btn = document.getElementById('btn-sniff');
-      btn.innerText = '正在探嗅网页资源...';
+      btn.innerText = '正在解析...';
       btn.disabled = true;
 
       try {
-        if (/\.(mp4|m4v|webm|mp3|m4a|mov|jpg|png|webp)(\?.*)?$/i.test(url)) {
-          const rawName = url.split('/').pop().split('?')[0] || 'media_file';
+        // 1. 识别磁力链接
+        if (/^magnet:\?/i.test(cleanUrl)) {
+          const enhancedMagnet = formatMagnetWithTrackers(cleanUrl);
+          const name = parseMagnetName(enhancedMagnet);
           addTask({
-            title: decodeURIComponent(rawName),
-            url: url,
-            kind: url.match(/\.(mp3|m4a)$/i) ? 'audio' : 'video'
+            title: name,
+            url: enhancedMagnet,
+            kind: 'torrent',
+            type: 'magnet'
           });
           return;
         }
 
-        const fetchUrl = corsProxy ? `${corsProxy}${encodeURIComponent(url)}` : url;
+        // 2. 识别音视频直链
+        if (/\.(mp4|m4v|webm|mp3|m4a|mov|jpg|png|webp)(\?.*)?$/i.test(cleanUrl)) {
+          const rawName = cleanUrl.split('/').pop().split('?')[0] || 'media_file';
+          addTask({
+            title: decodeURIComponent(rawName),
+            url: cleanUrl,
+            kind: cleanUrl.match(/\.(mp3|m4a)$/i) ? 'audio' : 'video',
+            type: 'http'
+          });
+          return;
+        }
+
+        // 3. 网页解析
+        const fetchUrl = corsProxy ? `${corsProxy}${encodeURIComponent(cleanUrl)}` : cleanUrl;
         const res = await fetch(fetchUrl);
         const html = await res.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -166,38 +238,49 @@
         const title = doc.querySelector('title')?.innerText.trim() || '未命名网页资源';
         const found = [];
 
-        const ogVideo = doc.querySelector('meta[property="og:video"]')?.content || 
-                        doc.querySelector('meta[property="og:video:url"]')?.content;
+        doc.querySelectorAll('a[href^="magnet:?"]').forEach(a => {
+          const href = sanitizeInput(a.getAttribute('href'));
+          found.push({
+            title: a.innerText.trim() || parseMagnetName(href),
+            url: formatMagnetWithTrackers(href),
+            kind: 'torrent',
+            type: 'magnet'
+          });
+        });
+
+        const ogVideo = doc.querySelector('meta[property="og:video"]')?.content;
         if (ogVideo) {
           found.push({
             title: `${title} (OG 视频)`,
-            url: new URL(ogVideo, url).href,
-            kind: 'video'
+            url: new URL(ogVideo, cleanUrl).href,
+            kind: 'video',
+            type: 'http'
           });
         }
 
         doc.querySelectorAll('video, audio, source').forEach((el, idx) => {
           const src = el.getAttribute('src');
           if (src) {
-            const absolute = new URL(src, url).href;
+            const absolute = new URL(src, cleanUrl).href;
             if (!found.find(f => f.url === absolute)) {
               const tag = el.tagName.toLowerCase();
               found.push({
-                title: `${title} (${tag === 'audio' ? '音频' : '媒体'} #${idx + 1})`,
+                title: `${title} (${tag === 'audio' ? '音频' : '视频'} #${idx + 1})`,
                 url: absolute,
-                kind: tag === 'audio' ? 'audio' : 'video'
+                kind: tag === 'audio' ? 'audio' : 'video',
+                type: 'http'
               });
             }
           }
         });
 
         if (found.length === 0) {
-          addTask({ title, url, kind: 'video' });
+          addTask({ title, url: cleanUrl, kind: 'video', type: 'http' });
         } else {
           renderSniffResults(title, found);
         }
       } catch (err) {
-        alert(`探嗅失败: ${err.message}\n提示：若为直链，可在“设置”中关闭 CORS 代理。`);
+        alert(`解析失败: ${err.message}`);
       } finally {
         if (btn) {
           btn.innerText = '开始探嗅 / 入队';
@@ -238,19 +321,114 @@
         title: item.title,
         url: item.url,
         kind: item.kind || 'video',
+        type: item.type || 'http',
         progress: 0,
         bytesReceived: 0,
         totalBytes: 0,
-        status: 'downloading'
+        status: 'resolving',
+        info: '正在连接节点...'
       };
       tasks.unshift(task);
       switchTab('queue');
-      executeDownload(task);
+
+      if (task.type === 'magnet') {
+        executeMagnetDownload(task);
+      } else {
+        executeHttpDownload(task);
+      }
     }
 
-    async function executeDownload(task) {
+    function executeMagnetDownload(task) {
+      const client = getWebTorrentClient();
+      if (!client) {
+        task.status = 'failed';
+        task.info = 'WebTorrent 引擎未载入';
+        updateTaskProgress(task);
+        return;
+      }
+
+      task.status = 'resolving';
+      task.info = '正在寻找 WebRTC 节点...';
+      updateTaskProgress(task);
+
+      try {
+        const torrent = client.add(task.url, (t) => {
+          task.title = t.name || task.title;
+          task.totalBytes = t.length;
+          task.status = 'downloading';
+          task.info = `已连接 ${t.numPeers} 个 WebRTC 节点`;
+          updateTaskProgress(task);
+
+          const targetFile = t.files.reduce((a, b) => (a.length > b.length ? a : b), t.files[0]);
+
+          t.on('download', () => {
+            task.bytesReceived = t.downloaded;
+            task.progress = Math.min(100, Math.round(t.progress * 100));
+            task.info = `${(t.downloadSpeed / 1024 / 1024).toFixed(2)} MB/s · 节点: ${t.numPeers}`;
+            updateTaskProgress(task);
+          });
+
+          targetFile.getBlob(async (err, blob) => {
+            if (err) {
+              task.status = 'failed';
+              task.info = '读取文件失败';
+              updateTaskProgress(task);
+              return;
+            }
+
+            const fileRecord = {
+              id: task.id,
+              title: targetFile.name,
+              kind: targetFile.name.match(/\.(mp3|m4a|flac)$/i) ? 'audio' : 'video',
+              mime: blob.type || 'video/mp4',
+              blob: blob,
+              sizeFormatted: (blob.size / (1024 * 1024)).toFixed(1) + ' MB',
+              date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            };
+
+            await saveFileRecord(fileRecord);
+            files.unshift(fileRecord);
+            updateStorageUsage();
+
+            task.status = 'completed';
+            task.progress = 100;
+            task.info = '已入库';
+            updateTaskProgress(task);
+          });
+        });
+
+        torrent.on('error', (err) => {
+          task.status = 'failed';
+          task.info = err.message;
+          updateTaskProgress(task);
+        });
+
+        // 30 秒超时提醒
+        setTimeout(() => {
+          if (task.status === 'resolving' && task.progress === 0) {
+            task.info = '未发现 WebRTC 节点 (该种子可能仅有传统 UDP 做种)';
+            updateTaskProgress(task);
+          }
+        }, 20000);
+
+        abortPool.set(task.id, {
+          abort: () => {
+            client.remove(torrent);
+          }
+        });
+      } catch (err) {
+        task.status = 'failed';
+        task.info = err.message;
+        updateTaskProgress(task);
+      }
+    }
+
+    async function executeHttpDownload(task) {
       const controller = new AbortController();
       abortPool.set(task.id, controller);
+      task.status = 'downloading';
+      task.info = '拉取数据流...';
+      updateTaskProgress(task);
 
       try {
         const fetchUrl = corsProxy ? `${corsProxy}${encodeURIComponent(task.url)}` : task.url;
@@ -275,6 +453,7 @@
 
           task.bytesReceived = received;
           task.progress = total ? Math.min(100, Math.round((received / total) * 100)) : 0;
+          task.info = `${(received / (1024 * 1024)).toFixed(1)} MB`;
           updateTaskProgress(task);
         }
 
@@ -297,13 +476,15 @@
 
         task.status = 'completed';
         task.progress = 100;
+        task.info = '下载完成';
         updateTaskProgress(task);
       } catch (err) {
         if (err.name === 'AbortError') {
           task.status = 'paused';
+          task.info = '已暂停';
         } else {
           task.status = 'failed';
-          task.error = err.message;
+          task.info = err.message;
         }
         updateTaskProgress(task);
       } finally {
@@ -316,12 +497,14 @@
         const pBar = document.getElementById(`prog-${task.id}`);
         const pText = document.getElementById(`text-${task.id}`);
         const pStatus = document.getElementById(`status-${task.id}`);
+        const pInfo = document.getElementById(`info-${task.id}`);
         if (pBar) pBar.style.width = `${task.progress}%`;
         if (pText) pText.innerText = `${(task.bytesReceived / (1024 * 1024)).toFixed(1)} MB · ${task.progress}%`;
         if (pStatus) pStatus.innerText = task.status;
+        if (pInfo) pInfo.innerText = task.info;
       }
       
-      const hasActive = tasks.some(t => t.status === 'downloading');
+      const hasActive = tasks.some(t => t.status === 'downloading' || t.status === 'resolving');
       const badge = document.getElementById('queue-badge');
       if (badge) badge.className = hasActive ? 'absolute top-1 right-6 w-2 h-2 bg-blue-500 rounded-full' : 'hidden';
     }
@@ -377,14 +560,14 @@
           <div class="space-y-5 pt-2">
             <div>
               <h1 class="text-xl font-bold text-white tracking-tight">媒体探嗅与下载</h1>
-              <p class="text-xs text-neutral-500 mt-1">支持 MP4 直链、OG 视频流与网页媒体提取</p>
+              <p class="text-xs text-neutral-500 mt-1">支持 MP4 直链、Magnet 磁力链接、OG 视频提取</p>
             </div>
 
             <div class="space-y-3">
               <textarea
                 id="input-url"
                 rows="4"
-                placeholder="在此粘贴视频直链、音频或网页地址..."
+                placeholder="在此粘贴磁力链接 (magnet:?xt=...)、视频直链或网页地址..."
                 class="w-full p-3.5 bg-neutral-900 border border-neutral-800 rounded-xl text-xs focus:outline-none focus:border-neutral-600 resize-none text-neutral-100 placeholder-neutral-600 font-mono"
               ></textarea>
 
@@ -407,13 +590,13 @@
               <div class="p-3.5 bg-neutral-900 border border-neutral-800 rounded-xl space-y-2">
                 <div class="flex justify-between items-center">
                   <span class="truncate max-w-[70%] text-xs font-medium text-neutral-200">${t.title}</span>
-                  <span id="status-${t.id}" class="text-[10px] uppercase font-bold text-neutral-500">${t.status}</span>
+                  <span id="status-${t.id}" class="text-[10px] uppercase font-bold text-neutral-400">${t.status}</span>
                 </div>
                 <div class="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden">
                   <div id="prog-${t.id}" class="bg-blue-500 h-full transition-all duration-200" style="width: ${t.progress}%"></div>
                 </div>
                 <div class="flex justify-between items-center text-[10px] text-neutral-500">
-                  <span id="text-${t.id}">${(t.bytesReceived / (1024 * 1024)).toFixed(1)} MB · ${t.progress}%</span>
+                  <span id="info-${t.id}" class="truncate max-w-[75%] font-mono text-neutral-400">${t.info}</span>
                   <button onclick="cancelTask('${t.id}')" class="text-red-400">取消</button>
                 </div>
               </div>
@@ -453,6 +636,12 @@
                   <option value="https://api.allorigins.win/raw?url=" ${corsProxy.includes('allorigins') ? 'selected' : ''}>AllOrigins (备用通道)</option>
                   <option value="" ${!corsProxy ? 'selected' : ''}>直连模式 (仅支持允许跨域的直链)</option>
                 </select>
+              </div>
+              <div class="pt-2 border-t border-neutral-800 space-y-1">
+                <p class="text-neutral-400 font-medium">关于磁力与 WebRTC：</p>
+                <p class="text-[11px] text-neutral-500 leading-relaxed">
+                  网页端无法使用 UDP 连接传统 BT 客户端，仅支持 WebRTC 节点与 WebSeed 直链。
+                </p>
               </div>
             </div>
           </div>
