@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>流明</title>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="流明">
+  <meta name="theme-color" content="#0a0a0a">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --sat: env(safe-area-inset-top, 20px);
+      --sab: env(safe-area-inset-bottom, 20px);
+    }
+    body {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      background-color: #000000;
+      color: #f5f5f5;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    }
+    .safe-top { padding-top: max(var(--sat), 16px); }
+    .safe-bottom { padding-bottom: max(var(--sab), 16px); }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="bg-black text-neutral-100 h-screen flex flex-col justify-between overflow-hidden">
+  <header class="safe-top bg-neutral-950/90 backdrop-blur border-b border-neutral-900 px-5 py-3 flex justify-between items-center z-10">
+    <div class="flex items-center gap-2">
+      <span class="font-bold text-white tracking-wider text-sm">流明 LUMEN</span>
+      <span class="text-[10px] px-1.5 py-0.5 bg-neutral-800 text-neutral-400 rounded">本地版</span>
+    </div>
+    <span id="storage-indicator" class="text-[11px] text-neutral-500 font-mono">0.0 MB</span>
+  </header>
+
+  <main id="app-viewport" class="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4"></main>
+
+  <nav class="safe-bottom bg-neutral-950/95 backdrop-blur border-t border-neutral-900 flex justify-around py-2 z-10">
+    <button onclick="switchTab('home')" id="tab-home" class="flex flex-col items-center gap-1 text-white flex-1 py-1">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+      <span class="text-[10px] font-medium">首页</span>
+    </button>
+    <button onclick="switchTab('queue')" id="tab-queue" class="flex flex-col items-center gap-1 text-neutral-500 flex-1 py-1 relative">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+      <span class="text-[10px] font-medium">传输</span>
+      <span id="queue-badge" class="hidden absolute top-1 right-6 w-2 h-2 bg-blue-500 rounded-full"></span>
+    </button>
+    <button onclick="switchTab('files')" id="tab-files" class="flex flex-col items-center gap-1 text-neutral-500 flex-1 py-1">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
+      <span class="text-[10px] font-medium">文件库</span>
+    </button>
+    <button onclick="switchTab('settings')" id="tab-settings" class="flex flex-col items-center gap-1 text-neutral-500 flex-1 py-1">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      <span class="text-[10px] font-medium">设置</span>
+    </button>
+  </nav>
+
+  <script>
+    let currentTab = 'home';
+    let tasks = [];
+    let files = [];
+    let corsProxy = localStorage.getItem('lumen_cors') || 'https://corsproxy.io/?';
+    const abortPool = new Map();
+
+    function openDB() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open('LumenLocalVault', 2);
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains('files')) {
+            db.createObjectStore('files', { keyPath: 'id' });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function saveFileRecord(record) {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('files', 'readwrite');
+        tx.objectStore('files').put(record);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    async function loadAllFileRecords() {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('files', 'readonly');
+        const req = tx.objectStore('files').getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function deleteFileRecord(id) {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('files', 'readwrite');
+        tx.objectStore('files').delete(id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    if (navigator.storage && navigator.storage.persist) {
+      navigator.storage.persist();
+    }
+
+    async function init() {
+      files = await loadAllFileRecords();
+      updateStorageUsage();
+      render();
+    }
+
+    function updateStorageUsage() {
+      let totalBytes = files.reduce((acc, f) => acc + (f.blob?.size || 0), 0);
+      const mb = (totalBytes / (1024 * 1024)).toFixed(1);
+      const indicator = document.getElementById('storage-indicator');
+      if (indicator) indicator.innerText = `${mb} MB`;
+    }
+
+    function switchTab(tab) {
+      currentTab = tab;
+      ['home', 'queue', 'files', 'settings'].forEach(t => {
+        const el = document.getElementById(`tab-${t}`);
+        if (el) {
+          el.className = `flex flex-col items-center gap-1 flex-1 py-1 ${t === tab ? 'text-white' : 'text-neutral-500'}`;
+        }
+      });
+      render();
+    }
+
+    async function handleSniff() {
+      const input = document.getElementById('input-url');
+      const url = input ? input.value.trim() : '';
+      if (!url) return;
+
+      const btn = document.getElementById('btn-sniff');
+      btn.innerText = '正在探嗅网页资源...';
+      btn.disabled = true;
+
+      try {
+        if (/\.(mp4|m4v|webm|mp3|m4a|mov|jpg|png|webp)(\?.*)?$/i.test(url)) {
+          const rawName = url.split('/').pop().split('?')[0] || 'media_file';
+          addTask({
+            title: decodeURIComponent(rawName),
+            url: url,
+            kind: url.match(/\.(mp3|m4a)$/i) ? 'audio' : 'video'
+          });
+          return;
+        }
+
+        const fetchUrl = corsProxy ? `${corsProxy}${encodeURIComponent(url)}` : url;
+        const res = await fetch(fetchUrl);
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+
+        const title = doc.querySelector('title')?.innerText.trim() || '未命名网页资源';
+        const found = [];
+
+        const ogVideo = doc.querySelector('meta[property="og:video"]')?.content || 
+                        doc.querySelector('meta[property="og:video:url"]')?.content;
+        if (ogVideo) {
+          found.push({
+            title: `${title} (OG 视频)`,
+            url: new URL(ogVideo, url).href,
+            kind: 'video'
+          });
+        }
+
+        doc.querySelectorAll('video, audio, source').forEach((el, idx) => {
+          const src = el.getAttribute('src');
+          if (src) {
+            const absolute = new URL(src, url).href;
+            if (!found.find(f => f.url === absolute)) {
+              const tag = el.tagName.toLowerCase();
+              found.push({
+                title: `${title} (${tag === 'audio' ? '音频' : '媒体'} #${idx + 1})`,
+                url: absolute,
+                kind: tag === 'audio' ? 'audio' : 'video'
+              });
+            }
+          }
+        });
+
+        if (found.length === 0) {
+          addTask({ title, url, kind: 'video' });
+        } else {
+          renderSniffResults(title, found);
+        }
+      } catch (err) {
+        alert(`探嗅失败: ${err.message}\n提示：若为直链，可在“设置”中关闭 CORS 代理。`);
+      } finally {
+        if (btn) {
+          btn.innerText = '开始探嗅 / 入队';
+          btn.disabled = false;
+        }
+      }
+    }
+
+    function renderSniffResults(pageTitle, items) {
+      const viewport = document.getElementById('app-viewport');
+      viewport.innerHTML = `
+        <div class="space-y-4">
+          <div class="flex justify-between items-center">
+            <h2 class="text-base font-bold text-white">探嗅到 ${items.length} 个媒体项</h2>
+            <button onclick="switchTab('home')" class="text-xs text-neutral-400">返回</button>
+          </div>
+          <p class="text-xs text-neutral-500 truncate">${pageTitle}</p>
+          <div class="space-y-2">
+            ${items.map((it) => `
+              <div class="p-3 bg-neutral-900 border border-neutral-800 rounded-xl flex justify-between items-center">
+                <div class="max-w-[70%] space-y-1">
+                  <span class="text-[9px] px-1.5 py-0.5 bg-neutral-800 text-neutral-300 rounded uppercase font-semibold">${it.kind}</span>
+                  <p class="text-xs font-medium truncate text-neutral-200">${it.title}</p>
+                </div>
+                <button onclick='addTask(${JSON.stringify(it)})' class="px-3 py-1.5 bg-white text-black text-xs font-semibold rounded-lg active:scale-95 transition">
+                  下载
+                </button>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    function addTask(item) {
+      const task = {
+        id: 't_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+        title: item.title,
+        url: item.url,
+        kind: item.kind || 'video',
+        progress: 0,
+        bytesReceived: 0,
+        totalBytes: 0,
+        status: 'downloading'
+      };
+      tasks.unshift(task);
+      switchTab('queue');
+      executeDownload(task);
+    }
+
+    async function executeDownload(task) {
+      const controller = new AbortController();
+      abortPool.set(task.id, controller);
+
+      try {
+        const fetchUrl = corsProxy ? `${corsProxy}${encodeURIComponent(task.url)}` : task.url;
+        const res = await fetch(fetchUrl, { signal: controller.signal });
+        
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const contentLength = res.headers.get('content-length');
+        const total = contentLength ? parseInt(contentLength, 10) : 0;
+        task.totalBytes = total;
+
+        const reader = res.body.getReader();
+        const chunks = [];
+        let received = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          chunks.push(value);
+          received += value.byteLength;
+
+          task.bytesReceived = received;
+          task.progress = total ? Math.min(100, Math.round((received / total) * 100)) : 0;
+          updateTaskProgress(task);
+        }
+
+        const mime = task.kind === 'audio' ? 'audio/mp3' : 'video/mp4';
+        const finalBlob = new Blob(chunks, { type: mime });
+
+        const fileRecord = {
+          id: task.id,
+          title: task.title,
+          kind: task.kind,
+          mime: mime,
+          blob: finalBlob,
+          sizeFormatted: (received / (1024 * 1024)).toFixed(1) + ' MB',
+          date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+
+        await saveFileRecord(fileRecord);
+        files.unshift(fileRecord);
+        updateStorageUsage();
+
+        task.status = 'completed';
+        task.progress = 100;
+        updateTaskProgress(task);
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          task.status = 'paused';
+        } else {
+          task.status = 'failed';
+          task.error = err.message;
+        }
+        updateTaskProgress(task);
+      } finally {
+        abortPool.delete(task.id);
+      }
+    }
+
+    function updateTaskProgress(task) {
+      if (currentTab === 'queue') {
+        const pBar = document.getElementById(`prog-${task.id}`);
+        const pText = document.getElementById(`text-${task.id}`);
+        const pStatus = document.getElementById(`status-${task.id}`);
+        if (pBar) pBar.style.width = `${task.progress}%`;
+        if (pText) pText.innerText = `${(task.bytesReceived / (1024 * 1024)).toFixed(1)} MB · ${task.progress}%`;
+        if (pStatus) pStatus.innerText = task.status;
+      }
+      
+      const hasActive = tasks.some(t => t.status === 'downloading');
+      const badge = document.getElementById('queue-badge');
+      if (badge) badge.className = hasActive ? 'absolute top-1 right-6 w-2 h-2 bg-blue-500 rounded-full' : 'hidden';
+    }
+
+    function cancelTask(taskId) {
+      if (abortPool.has(taskId)) {
+        abortPool.get(taskId).abort();
+      }
+      tasks = tasks.filter(t => t.id !== taskId);
+      render();
+    }
+
+    async function saveToCameraRoll(fileId) {
+      const item = files.find(f => f.id === fileId);
+      if (!item || !item.blob) return alert('找不到对应文件');
+
+      const ext = item.kind === 'audio' ? '.mp3' : '.mp4';
+      const cleanTitle = item.title.replace(/[\\/:*?"<>|]/g, '_');
+      const file = new File([item.blob], `${cleanTitle}${ext}`, { type: item.mime || 'video/mp4' });
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: item.title
+          });
+        } catch (err) {
+          if (err.name !== 'AbortError') console.error(err);
+        }
+      } else {
+        const url = URL.createObjectURL(item.blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${cleanTitle}${ext}`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      }
+    }
+
+    async function removeFile(fileId) {
+      await deleteFileRecord(fileId);
+      files = files.filter(f => f.id !== fileId);
+      updateStorageUsage();
+      render();
+    }
+
+    function render() {
+      const viewport = document.getElementById('app-viewport');
+      if (!viewport) return;
+
+      if (currentTab === 'home') {
+        viewport.innerHTML = `
+          <div class="space-y-5 pt-2">
+            <div>
+              <h1 class="text-xl font-bold text-white tracking-tight">媒体探嗅与下载</h1>
+              <p class="text-xs text-neutral-500 mt-1">支持 MP4 直链、OG 视频流与网页媒体提取</p>
+            </div>
+
+            <div class="space-y-3">
+              <textarea
+                id="input-url"
+                rows="4"
+                placeholder="在此粘贴视频直链、音频或网页地址..."
+                class="w-full p-3.5 bg-neutral-900 border border-neutral-800 rounded-xl text-xs focus:outline-none focus:border-neutral-600 resize-none text-neutral-100 placeholder-neutral-600 font-mono"
+              ></textarea>
+
+              <button
+                id="btn-sniff"
+                onclick="handleSniff()"
+                class="w-full py-3.5 bg-white text-black font-semibold text-xs rounded-xl active:scale-[0.98] transition flex justify-center items-center gap-2"
+              >
+                开始探嗅 / 入队
+              </button>
+            </div>
+          </div>
+        `;
+      } else if (currentTab === 'queue') {
+        viewport.innerHTML = `
+          <div class="space-y-3">
+            <h2 class="text-base font-bold text-white">传输队列 (${tasks.length})</h2>
+            ${tasks.length === 0 ? '<div class="text-center py-20 text-neutral-600 text-xs">暂无传输中任务</div>' : ''}
+            ${tasks.map(t => `
+              <div class="p-3.5 bg-neutral-900 border border-neutral-800 rounded-xl space-y-2">
+                <div class="flex justify-between items-center">
+                  <span class="truncate max-w-[70%] text-xs font-medium text-neutral-200">${t.title}</span>
+                  <span id="status-${t.id}" class="text-[10px] uppercase font-bold text-neutral-500">${t.status}</span>
+                </div>
+                <div class="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden">
+                  <div id="prog-${t.id}" class="bg-blue-500 h-full transition-all duration-200" style="width: ${t.progress}%"></div>
+                </div>
+                <div class="flex justify-between items-center text-[10px] text-neutral-500">
+                  <span id="text-${t.id}">${(t.bytesReceived / (1024 * 1024)).toFixed(1)} MB · ${t.progress}%</span>
+                  <button onclick="cancelTask('${t.id}')" class="text-red-400">取消</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      } else if (currentTab === 'files') {
+        viewport.innerHTML = `
+          <div class="space-y-3">
+            <h2 class="text-base font-bold text-white">本机文件库 (${files.length})</h2>
+            ${files.length === 0 ? '<div class="text-center py-20 text-neutral-600 text-xs">文件库为空</div>' : ''}
+            ${files.map(f => `
+              <div class="p-3.5 bg-neutral-900 border border-neutral-800 rounded-xl flex justify-between items-center">
+                <div class="max-w-[60%] space-y-0.5">
+                  <p class="text-xs font-medium truncate text-white">${f.title}</p>
+                  <p class="text-[10px] text-neutral-500 font-mono">${f.sizeFormatted} · ${f.date}</p>
+                </div>
+                <div class="flex gap-2 items-center">
+                  <button onclick="saveToCameraRoll('${f.id}')" class="px-3 py-1.5 bg-blue-600 active:bg-blue-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1">
+                    存至相册
+                  </button>
+                  <button onclick="removeFile('${f.id}')" class="p-1.5 text-neutral-500 hover:text-red-400 text-xs">✕</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      } else if (currentTab === 'settings') {
+        viewport.innerHTML = `
+          <div class="space-y-4">
+            <h2 class="text-base font-bold text-white">偏好设置</h2>
+            <div class="p-4 bg-neutral-900 border border-neutral-800 rounded-xl space-y-4 text-xs">
+              <div>
+                <label class="text-neutral-400 block mb-1.5 font-medium">CORS 跨域通道</label>
+                <select id="proxy-select" onchange="updateProxy(this.value)" class="w-full bg-neutral-800 border border-neutral-700 rounded-lg p-2.5 text-neutral-200 focus:outline-none">
+                  <option value="https://corsproxy.io/?" ${corsProxy.includes('corsproxy') ? 'selected' : ''}>CorsProxy.io (推荐，极速)</option>
+                  <option value="https://api.allorigins.win/raw?url=" ${corsProxy.includes('allorigins') ? 'selected' : ''}>AllOrigins (备用通道)</option>
+                  <option value="" ${!corsProxy ? 'selected' : ''}>直连模式 (仅支持允许跨域的直链)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    function updateProxy(val) {
+      corsProxy = val;
+      localStorage.setItem('lumen_cors', val);
+    }
+
+    init();
+  </script>
+</body>
+</html>
